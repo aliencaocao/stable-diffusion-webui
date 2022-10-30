@@ -30,6 +30,7 @@ except Exception:
 
 
 def setup_model():
+    torch.backends.cudnn.benchmark = True
     if not os.path.exists(model_path):
         os.makedirs(model_path)
 

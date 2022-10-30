@@ -13,6 +13,7 @@ echo Couldn't launch python
 goto :show_stdout_stderr
 
 :start_venv
+goto :skip_venv
 if [%VENV_DIR%] == [-] goto :skip_venv
 
 dir %VENV_DIR%\Scripts\Python.exe >tmp/stdout.txt 2>tmp/stderr.txt

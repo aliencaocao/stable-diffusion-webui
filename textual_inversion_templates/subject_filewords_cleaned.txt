@@ -1,0 +1,4 @@
+masterpiece, best quality, [name], [filewords]
+best quality, masterpiece, highres, original, extremely detailed, wallpaper, [name], [filewords]
+[name], [filewords]
+[name]

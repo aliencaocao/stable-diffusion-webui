@@ -5,7 +5,7 @@ from typing_extensions import Literal
 from inflection import underscore
 from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img
 from modules.shared import sd_upscalers, opts, parser
-from typing import List
+from typing import Dict, List
 
 API_NOT_ALLOWED = [
     "self",
@@ -65,6 +65,7 @@ class PydanticModelGenerator:
 
         self._model_name = model_name
         self._class_data = merge_class_params(class_instance)
+
         self._model_def = [
             ModelDef(
                 field=underscore(k),
@@ -167,6 +168,12 @@ class ProgressResponse(BaseModel):
     state: dict = Field(title="State", description="The current state snapshot")
     current_image: str = Field(default=None, title="Current image", description="The current image in base64 format. opts.show_progress_every_n_steps is required for this to work.")
 
+class InterrogateRequest(BaseModel):
+    image: str = Field(default="", title="Image", description="Image to work on, must be a Base64 string containing the image's data.")
+
+class InterrogateResponse(BaseModel):
+    caption: str = Field(default=None, title="Caption", description="The generated caption for the image.")
+
 fields = {}
 for key, value in opts.data.items():
     metadata = opts.data_labels.get(key)
@@ -193,8 +200,8 @@ FlagsModel = create_model("Flags", **flags)
 
 class SamplerItem(BaseModel):
     name: str = Field(title="Name")
-    aliases: list[str] = Field(title="Aliases")
-    options: dict[str, str] = Field(title="Options")
+    aliases: List[str] = Field(title="Aliases")
+    options: Dict[str, str] = Field(title="Options")
 
 class UpscalerItem(BaseModel):
     name: str = Field(title="Name")
@@ -231,3 +238,4 @@ class ArtistItem(BaseModel):
     name: str = Field(title="Name")
     score: float = Field(title="Score")
     category: str = Field(title="Category")
+

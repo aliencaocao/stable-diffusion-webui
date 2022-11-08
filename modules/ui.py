@@ -1141,7 +1141,7 @@ def create_ui(wrap_gradio_gpu_call):
             outputs=[html, generation_info, html2],
         )
 
-    with gr.Blocks() as modelmerger_interface:
+    with gr.Blocks(analytics_enabled=False) as modelmerger_interface:
         with gr.Row().style(equal_height=False):
             with gr.Column(variant='panel'):
                 gr.HTML(value="<p>A merger of the two checkpoints will be generated in your <b>checkpoint</b> directory.</p>")
@@ -1161,7 +1161,7 @@ def create_ui(wrap_gradio_gpu_call):
 
     sd_hijack.model_hijack.embedding_db.load_textual_inversion_embeddings()
 
-    with gr.Blocks() as train_interface:
+    with gr.Blocks(analytics_enabled=False) as train_interface:
         with gr.Row().style(equal_height=False):
             gr.HTML(value="<p style='margin-bottom: 0.7em'>See <b><a href=\"https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Textual-Inversion\">wiki</a></b> for detailed explanation.</p>")
 
@@ -1269,6 +1269,10 @@ def create_ui(wrap_gradio_gpu_call):
                         interrupt_training = gr.Button(value="Interrupt")
                         train_hypernetwork = gr.Button(value="Train Hypernetwork", variant='primary')
                         train_embedding = gr.Button(value="Train Embedding", variant='primary')
+
+                params = script_callbacks.UiTrainTabParams(txt2img_preview_params)
+
+                script_callbacks.ui_train_tabs_callback(params)
 
             with gr.Column():
                 progressbar = gr.HTML(elem_id="ti_progressbar")
@@ -1420,15 +1424,14 @@ def create_ui(wrap_gradio_gpu_call):
 
         if info.refresh is not None:
             if is_quicksettings:
-                res = comp(label=info.label, value=fun, elem_id=elem_id, **(args or {}))
+                res = comp(label=info.label, value=fun(), elem_id=elem_id, **(args or {}))
                 create_refresh_button(res, info.refresh, info.component_args, "refresh_" + key)
             else:
                 with gr.Row(variant="compact"):
-                    res = comp(label=info.label, value=fun, elem_id=elem_id, **(args or {}))
+                    res = comp(label=info.label, value=fun(), elem_id=elem_id, **(args or {}))
                     create_refresh_button(res, info.refresh, info.component_args, "refresh_" + key)
         else:
-            res = comp(label=info.label, value=fun, elem_id=elem_id, **(args or {}))
-
+            res = comp(label=info.label, value=fun(), elem_id=elem_id, **(args or {}))
 
         return res
 
@@ -1639,6 +1642,17 @@ def create_ui(wrap_gradio_gpu_call):
                 outputs=[component, text_settings],
             )
 
+        component_keys = [k for k in opts.data_labels.keys() if k in component_dict]
+
+        def get_settings_values():
+            return [getattr(opts, key) for key in component_keys]
+
+        demo.load(
+            fn=get_settings_values,
+            inputs=[],
+            outputs=[component_dict[k] for k in component_keys],
+        )
+
         def modelmerger(*args):
             try:
                 results = modules.extras.run_modelmerger(*args)
@@ -1742,7 +1756,7 @@ def create_ui(wrap_gradio_gpu_call):
     return demo
 
 
-def load_javascript(raw_response):
+def reload_javascript():
     with open(os.path.join(script_path, "script.js"), "r", encoding="utf8") as jsfile:
         javascript = f'<script>{jsfile.read()}</script>'
 
@@ -1758,7 +1772,7 @@ def load_javascript(raw_response):
     javascript += f"\n<script>{localization.localization_js(shared.opts.localization)}</script>"
 
     def template_response(*args, **kwargs):
-        res = raw_response(*args, **kwargs)
+        res = shared.GradioTemplateResponseOriginal(*args, **kwargs)
         res.body = res.body.replace(
             b'</head>', f'{javascript}</head>'.encode("utf8"))
         res.init_headers()
@@ -1767,4 +1781,5 @@ def load_javascript(raw_response):
     gradio.routes.templates.TemplateResponse = template_response
 
 
-reload_javascript = partial(load_javascript, gradio.routes.templates.TemplateResponse)
+if not hasattr(shared, 'GradioTemplateResponseOriginal'):
+    shared.GradioTemplateResponseOriginal = gradio.routes.templates.TemplateResponse

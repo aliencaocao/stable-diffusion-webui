@@ -31,6 +31,8 @@ except Exception:
 
 
 def setup_model():
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
     torch.backends.cudnn.benchmark = True
     if not os.path.exists(model_path):
         os.makedirs(model_path)

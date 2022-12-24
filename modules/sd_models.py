@@ -307,7 +307,7 @@ def load_model(checkpoint_info=None):
         devices.torch_gc()
 
     sd_config = OmegaConf.load(checkpoint_info.config)
-    
+
     if should_hijack_inpainting(checkpoint_info):
         # Hardcoded config for now...
         sd_config.model.target = "ldm.models.diffusion.ddpm.LatentInpaintDiffusion"
@@ -337,6 +337,7 @@ def load_model(checkpoint_info=None):
     sd_hijack.model_hijack.hijack(sd_model)
 
     sd_model.eval()
+    sd_model = torch.compile(sd_model, fullgraph=True, dynamic=False, mode='max-autotune')
     shared.sd_model = sd_model
 
     script_callbacks.model_loaded_callback(sd_model)
@@ -376,6 +377,7 @@ def reload_model_weights(sd_model=None, info=None):
 
     sd_hijack.model_hijack.hijack(sd_model)
     print(f"HIGHJACK stuff in {datetime.datetime.now() - start}")
+    sd_model = torch.compile(sd_model, fullgraph=True, dynamic=False, mode='max-autotune')
     script_callbacks.model_loaded_callback(sd_model)
     print(f"callback stuff in {datetime.datetime.now() - start}")
 

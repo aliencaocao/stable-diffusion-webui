@@ -109,6 +109,17 @@ restricted_opts = {
     "outdir_save",
 }
 
+ui_reorder_categories = [
+    "sampler",
+    "dimensions",
+    "cfg",
+    "seed",
+    "checkboxes",
+    "hires_fix",
+    "batch",
+    "scripts",
+]
+
 cmd_opts.disable_extension_access = (cmd_opts.share or cmd_opts.listen or cmd_opts.server_name) and not cmd_opts.enable_insecure_extension_access
 
 devices.device, devices.device_interrogate, devices.device_gfpgan, devices.device_esrgan, devices.device_codeformer = \
@@ -327,7 +338,6 @@ options_templates.update(options_section(('upscaling', "Upscaling"), {
     "ESRGAN_tile_overlap": OptionInfo(8, "Tile overlap, in pixels for ESRGAN upscalers. Low values = visible seam.", gr.Slider, {"minimum": 0, "maximum": 48, "step": 1}),
     "realesrgan_enabled_models": OptionInfo(["R-ESRGAN 4x+", "R-ESRGAN 4x+ Anime6B"], "Select which Real-ESRGAN models to show in the web UI. (Requires restart)", gr.CheckboxGroup, lambda: {"choices": realesrgan_models_names()}),
     "upscaler_for_img2img": OptionInfo(None, "Upscaler for img2img", gr.Dropdown, lambda: {"choices": [x.name for x in sd_upscalers]}),
-    "use_scale_latent_for_hires_fix": OptionInfo(False, "Upscale latent space image when doing hires. fix"),
 }))
 
 options_templates.update(options_section(('face-restoration', "Face restoration"), {
@@ -411,7 +421,9 @@ options_templates.update(options_section(('ui', "User interface"), {
     "js_modal_lightbox_initially_zoomed": OptionInfo(True, "Show images zoomed in by default in full page image viewer"),
     "show_progress_in_title": OptionInfo(True, "Show generation progress in window title."),
     "samplers_in_dropdown": OptionInfo(True, "Use dropdown for sampler selection instead of radio group"),
+    "dimensions_and_batch_together": OptionInfo(True, "Show Witdth/Height and Batch sliders in same row"),
     'quicksettings': OptionInfo("sd_model_checkpoint", "Quicksettings list"),
+    'ui_reorder': OptionInfo(", ".join(ui_reorder_categories), "txt2img/ing2img UI item order"),
     'localization': OptionInfo("None", "Localization (requires restart)", gr.Dropdown, lambda: {"choices": ["None"] + list(localization.localizations.keys())}, refresh=lambda: localization.list_localizations(cmd_opts.localizations_dir)),
 }))
 
@@ -544,6 +556,12 @@ class Options:
 opts = Options()
 if os.path.exists(config_filename):
     opts.load(config_filename)
+
+latent_upscale_default_mode = "Latent"
+latent_upscale_modes = {
+    "Latent": "bilinear",
+    "Latent (nearest)": "nearest",
+}
 
 sd_upscalers = []
 

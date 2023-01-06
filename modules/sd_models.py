@@ -21,7 +21,7 @@ from modules.sd_hijack_inpainting import do_inpainting_hijack, should_hijack_inp
 model_dir = "Stable-diffusion"
 model_path = os.path.abspath(os.path.join(models_path, model_dir))
 
-CheckpointInfo = namedtuple("CheckpointInfo", ['filename', 'title', 'hash', 'model_name', 'config'])
+CheckpointInfo = namedtuple("CheckpointInfo", ['filename', 'title', 'hash', 'model_name'])
 checkpoints_list = {}
 checkpoints_loaded = collections.OrderedDict()
 
@@ -52,6 +52,14 @@ def checkpoint_tiles():
     return sorted([x.title for x in checkpoints_list.values()], key = alphanumeric_key)
 
 
+def find_checkpoint_config(info):
+    config = os.path.splitext(info.filename)[0] + ".yaml"
+    if os.path.exists(config):
+        return config
+
+    return shared.cmd_opts.config
+
+
 def list_models():
     checkpoints_list.clear()
     model_list = modelloader.load_models(model_path=model_path, command_path=shared.cmd_opts.ckpt_dir, ext_filter=[".ckpt", ".safetensors"])
@@ -77,7 +85,7 @@ def list_models():
     if os.path.exists(cmd_ckpt):
         h = model_hash(cmd_ckpt)
         title, short_model_name = modeltitle(cmd_ckpt, h)
-        checkpoints_list[title] = CheckpointInfo(cmd_ckpt, title, h, short_model_name, shared.cmd_opts.config)
+        checkpoints_list[title] = CheckpointInfo(cmd_ckpt, title, h, short_model_name)
         shared.opts.data['sd_model_checkpoint'] = title
     elif cmd_ckpt is not None and cmd_ckpt != shared.default_sd_model_file:
         print(f"Checkpoint in --ckpt argument not found (Possible it was moved to {model_path}: {cmd_ckpt}", file=sys.stderr)
@@ -85,12 +93,7 @@ def list_models():
         h = model_hash(filename)
         title, short_model_name = modeltitle(filename, h)
 
-        basename, _ = os.path.splitext(filename)
-        config = basename + ".yaml"
-        if not os.path.exists(config):
-            config = shared.cmd_opts.config
-
-        checkpoints_list[title] = CheckpointInfo(filename, title, h, short_model_name, config)
+        checkpoints_list[title] = CheckpointInfo(filename, title, h, short_model_name)
 
 
 def get_closet_checkpoint_match(searchString):
@@ -115,7 +118,7 @@ def model_hash(filename):
 
 def select_checkpoint():
     model_checkpoint = shared.opts.sd_model_checkpoint
-
+        
     checkpoint_info = checkpoints_list.get(model_checkpoint, None)
     if checkpoint_info is not None:
         return checkpoint_info
@@ -177,6 +180,9 @@ def read_state_dict(checkpoint_file, print_global_state=False, map_location=None
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
     if extension.lower() == ".safetensors":
 
+device = map_location or shared.weight_load_location
+        if device is None:
+            device = devices.get_cuda_device_string() if torch.cuda.is_available() else "cpu"
         pl_sd = safetensors.torch.load_file(checkpoint_file, device=device)
     else:
         pl_sd = torch.load(checkpoint_file, map_location=device)
@@ -296,12 +302,14 @@ def enable_midas_autodownload():
 
     midas.api.load_model = load_model_wrapper
 
+
 def load_model(checkpoint_info=None):
     from modules import lowvram, sd_hijack
     checkpoint_info = checkpoint_info or select_checkpoint()
+    checkpoint_config = find_checkpoint_config(checkpoint_info)
 
-    if checkpoint_info.config != shared.cmd_opts.config:
-        print(f"Loading config from: {checkpoint_info.config}")
+    if checkpoint_config != shared.cmd_opts.config:
+        print(f"Loading config from: {checkpoint_config}")
 
     if shared.sd_model:
         sd_hijack.model_hijack.undo_hijack(shared.sd_model)
@@ -309,17 +317,13 @@ def load_model(checkpoint_info=None):
         gc.collect()
         devices.torch_gc()
 
-    sd_config = OmegaConf.load(checkpoint_info.config)
-
+    sd_config = OmegaConf.load(checkpoint_config)
     if should_hijack_inpainting(checkpoint_info):
         # Hardcoded config for now...
         sd_config.model.target = "ldm.models.diffusion.ddpm.LatentInpaintDiffusion"
         sd_config.model.params.conditioning_key = "hybrid"
         sd_config.model.params.unet_config.params.in_channels = 9
         sd_config.model.params.finetune_keys = None
-
-        # Create a "fake" config with a different name so that we know to unload it when switching models.
-        checkpoint_info = checkpoint_info._replace(config=checkpoint_info.config.replace(".yaml", "-inpainting.yaml"))
 
     if not hasattr(sd_config.model.params, "use_ema"):
         sd_config.model.params.use_ema = False
@@ -330,6 +334,7 @@ def load_model(checkpoint_info=None):
         sd_config.model.params.unet_config.params.use_fp16 = False
 
     sd_model = instantiate_from_config(sd_config.model)
+
     load_model_weights(sd_model, checkpoint_info)
 
     if shared.cmd_opts.lowvram or shared.cmd_opts.medvram:
@@ -356,14 +361,17 @@ def reload_model_weights(sd_model=None, info=None):
     start = datetime.datetime.now()
     from modules import lowvram, devices, sd_hijack
     checkpoint_info = info or select_checkpoint()
- 
+
     if not sd_model:
         sd_model = shared.sd_model
+
+    current_checkpoint_info = sd_model.sd_checkpoint_info
+    checkpoint_config = find_checkpoint_config(current_checkpoint_info)
 
     if sd_model.sd_model_checkpoint == checkpoint_info.filename:
         return
 
-    if sd_model.sd_checkpoint_info.config != checkpoint_info.config or should_hijack_inpainting(checkpoint_info) != should_hijack_inpainting(sd_model.sd_checkpoint_info):
+    if checkpoint_config != find_checkpoint_config(checkpoint_info) or should_hijack_inpainting(checkpoint_info) != should_hijack_inpainting(sd_model.sd_checkpoint_info):
         del sd_model
         checkpoints_loaded.clear()
         load_model(checkpoint_info)
@@ -378,17 +386,18 @@ def reload_model_weights(sd_model=None, info=None):
     sd_hijack.model_hijack.undo_hijack(sd_model)
     print(f"UNHIGHJACK stuff in {datetime.datetime.now() - start}")
 
-    load_model_weights(sd_model, checkpoint_info)
-    print(f"Loaded weights in {datetime.datetime.now() - start}")
+    try:
+        load_model_weights(sd_model, checkpoint_info)
+    except Exception as e:
+        print("Failed to load checkpoint, restoring previous")
+        load_model_weights(sd_model, current_checkpoint_info)
+        raise
+    finally:
+        sd_hijack.model_hijack.hijack(sd_model)
+        script_callbacks.model_loaded_callback(sd_model)
 
-    sd_hijack.model_hijack.hijack(sd_model)
-    print(f"HIGHJACK stuff in {datetime.datetime.now() - start}")
-    sd_model = torch.compile(sd_model, fullgraph=True, dynamic=False, mode='max-autotune')
-    script_callbacks.model_loaded_callback(sd_model)
-    print(f"callback stuff in {datetime.datetime.now() - start}")
-
-    if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram:
-        sd_model.to(devices.device)
+        if not shared.cmd_opts.lowvram and not shared.cmd_opts.medvram:
+            sd_model.to(devices.device)
     print(f"load on device {devices.device} in {datetime.datetime.now() - start}")
 
     print(f"Weights loaded. in {datetime.datetime.now() - start}")

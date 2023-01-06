@@ -175,21 +175,17 @@ def get_state_dict_from_checkpoint(pl_sd):
 def read_state_dict(checkpoint_file, print_global_state=False, map_location=None):
     _, extension = os.path.splitext(checkpoint_file)
     start = datetime.datetime.now()
-    device = map_location or shared.weight_load_location
-    if device is None:
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
     if extension.lower() == ".safetensors":
-
-device = map_location or shared.weight_load_location
+        device = map_location or shared.weight_load_location
         if device is None:
             device = devices.get_cuda_device_string() if torch.cuda.is_available() else "cpu"
         pl_sd = safetensors.torch.load_file(checkpoint_file, device=device)
+        print(f"Using device {device}")
     else:
-        pl_sd = torch.load(checkpoint_file, map_location=device)
+        pl_sd = torch.load(checkpoint_file, map_location=map_location or shared.weight_load_location)
     print(f"Loaded {checkpoint_file} in {datetime.datetime.now() - start}")
     print(f"Using map_location {map_location}")
     print(f"Using shared.weight_load_location {shared.weight_load_location}")
-    print(f"Using device {device}")
     if print_global_state and "global_step" in pl_sd:
         print(f"Global Step: {pl_sd['global_step']}")
 

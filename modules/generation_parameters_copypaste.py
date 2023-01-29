@@ -6,14 +6,13 @@ import re
 from pathlib import Path
 
 import gradio as gr
-from modules.shared import script_path
-from modules import shared, ui_tempdir
+from modules.paths import data_path
+from modules import shared, ui_tempdir, script_callbacks
 import tempfile
 from PIL import Image
 
-re_param_code = r'\s*([\w ]+):\s*("(?:\\|\"|[^\"])+"|[^,]*)(?:,|$)'
+re_param_code = r'\s*([\w ]+):\s*("(?:\\"[^,]|\\"|\\|[^\"])+"|[^,]*)(?:,|$)'
 re_param = re.compile(re_param_code)
-re_params = re.compile(r"^(?:" + re_param_code + "){3,}$")
 re_imagesize = re.compile(r"^(\d+)x(\d+)$")
 re_hypernet_hash = re.compile("\(([0-9a-f]+)\)$")
 type_of_gr_update = type(gr.update())
@@ -37,6 +36,9 @@ def quote(text):
 
 
 def image_from_url_text(filedata):
+    if filedata is None:
+        return None
+
     if type(filedata) == list and len(filedata) > 0 and type(filedata[0]) == dict and filedata[0].get("is_file", False):
         filedata = filedata[0]
 
@@ -76,8 +78,6 @@ def integrate_settings_paste_fields(component_dict):
     from modules import ui
 
     settings_map = {
-        'sd_hypernetwork': 'Hypernet',
-        'sd_hypernetwork_strength': 'Hypernet strength',
         'CLIP_stop_at_last_layers': 'Clip skip',
         'inpainting_mask_weight': 'Conditional mask weight',
         'sd_model_checkpoint': 'Model hash',
@@ -242,7 +242,7 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     done_with_prompt = False
 
     *lines, lastline = x.strip().split("\n")
-    if not re_params.match(lastline):
+    if len(re_param.findall(lastline)) < 3:
         lines.append(lastline)
         lastline = ''
 
@@ -261,6 +261,7 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     res["Negative prompt"] = negative_prompt
 
     for k, v in re_param.findall(lastline):
+        v = v[1:-1] if v[0] == '"' and v[-1] == '"' else v
         m = re_imagesize.match(v)
         if m is not None:
             res[k+"-1"] = m.group(1)
@@ -272,13 +273,9 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     if "Clip skip" not in res:
         res["Clip skip"] = "1"
 
-    if "Hypernet strength" not in res:
-        res["Hypernet strength"] = "1"
-
-    if "Hypernet" in res:
-        hypernet_name = res["Hypernet"]
-        hypernet_hash = res.get("Hypernet hash", None)
-        res["Hypernet"] = find_hypernetwork_key(hypernet_name, hypernet_hash)
+    hypernet = res.get("Hypernet", None)
+    if hypernet is not None:
+        res["Prompt"] += f"""<hypernet:{hypernet}:{res.get("Hypernet strength", "1.0")}>"""
 
     if "Hires resize-1" not in res:
         res["Hires resize-1"] = 0
@@ -292,12 +289,13 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
 def connect_paste(button, paste_fields, input_comp, jsfunc=None):
     def paste_func(prompt):
         if not prompt and not shared.cmd_opts.hide_ui_dir_config:
-            filename = os.path.join(script_path, "params.txt")
+            filename = os.path.join(data_path, "params.txt")
             if os.path.exists(filename):
                 with open(filename, "r", encoding="utf8") as file:
                     prompt = file.read()
 
         params = parse_generation_parameters(prompt)
+        script_callbacks.infotext_pasted_callback(prompt, params)
         res = []
 
         for output, key in paste_fields:

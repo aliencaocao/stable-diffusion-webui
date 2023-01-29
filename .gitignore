@@ -35,3 +35,4 @@ notification.mp3
 /temp
 /build
 /dist
+/cache.json

@@ -4,6 +4,7 @@ import time
 import importlib
 import signal
 import re
+import asyncio
 import warnings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from packaging import version
 
 import logging
+
 logging.getLogger("xformers").addFilter(lambda record: 'A matching Triton is not available' not in record.getMessage())
 
 from modules import paths, timer, import_hook, errors
@@ -18,14 +20,17 @@ from modules import paths, timer, import_hook, errors
 startup_timer = timer.Timer()
 
 import torch
-import pytorch_lightning # pytorch_lightning should be imported after torch, but it re-enables warnings on import so import once to disable them
+import pytorch_lightning  # pytorch_lightning should be imported after torch, but it re-enables warnings on import so import once to disable them
+
 warnings.filterwarnings(action="ignore", category=DeprecationWarning, module="pytorch_lightning")
 startup_timer.record("import torch")
 
 import gradio
+
 startup_timer.record("import gradio")
 
 import ldm.modules.encoders.modules
+
 startup_timer.record("import ldm")
 
 from modules import extra_networks, ui_extra_networks_checkpoints
@@ -60,11 +65,44 @@ import modules.hypernetworks.hypernetwork
 
 startup_timer.record("other imports")
 
-
 if cmd_opts.server_name:
     server_name = cmd_opts.server_name
 else:
     server_name = "0.0.0.0" if cmd_opts.listen else None
+if sys.platform == "win32" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+    # "Any thread" and "selector" should be orthogonal, but there's not a clean
+    # interface for composing policies so pick the right base.
+    _BasePolicy = asyncio.WindowsSelectorEventLoopPolicy  # type: ignore
+else:
+    _BasePolicy = asyncio.DefaultEventLoopPolicy
+
+
+class AnyThreadEventLoopPolicy(_BasePolicy):  # type: ignore
+    """Event loop policy that allows loop creation on any thread.
+    The default `asyncio` event loop policy only automatically creates
+    event loops in the main threads. Other threads must create event
+    loops explicitly or `asyncio.get_event_loop` (and therefore
+    `.IOLoop.current`) will fail. Installing this policy allows event
+    loops to be created automatically on any thread, matching the
+    behavior of Tornado versions prior to 5.0 (or 5.0 on Python 2).
+    Usage::
+        asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
+    .. versionadded:: 5.0
+    """
+
+    def get_event_loop(self) -> asyncio.AbstractEventLoop:
+        try:
+            return super().get_event_loop()
+        except (RuntimeError, AssertionError):
+            # This was an AssertionError in python 3.4.2 (which ships with debian jessie)
+            # and changed to a RuntimeError in 3.4.3.
+            # "There is no current event loop in thread %r"
+            loop = self.new_event_loop()
+            self.set_event_loop(loop)
+            return loop
+
+
+asyncio.set_event_loop_policy(AnyThreadEventLoopPolicy())
 
 
 def check_versions():
@@ -193,7 +231,7 @@ def initialize():
 
 
 def setup_middleware(app):
-    app.middleware_stack = None # reset current middleware to allow modifying user provided list
+    app.middleware_stack = None  # reset current middleware to allow modifying user provided list
     app.add_middleware(GZipMiddleware, minimum_size=1000)
     if cmd_opts.cors_allow_origins and cmd_opts.cors_allow_origins_regex:
         app.add_middleware(CORSMiddleware, allow_origins=cmd_opts.cors_allow_origins.split(','), allow_origin_regex=cmd_opts.cors_allow_origins_regex, allow_methods=['*'], allow_credentials=True, allow_headers=['*'])
@@ -201,7 +239,7 @@ def setup_middleware(app):
         app.add_middleware(CORSMiddleware, allow_origins=cmd_opts.cors_allow_origins.split(','), allow_methods=['*'], allow_credentials=True, allow_headers=['*'])
     elif cmd_opts.cors_allow_origins_regex:
         app.add_middleware(CORSMiddleware, allow_origin_regex=cmd_opts.cors_allow_origins_regex, allow_methods=['*'], allow_credentials=True, allow_headers=['*'])
-    app.build_middleware_stack() # rebuild middleware stack on-the-fly
+    app.build_middleware_stack()  # rebuild middleware stack on-the-fly
 
 
 def create_api(app):

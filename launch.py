@@ -25,6 +25,7 @@ start = launch_utils.start
 
 
 def main():
+    print(args)
     if not args.skip_prepare_environment:
         prepare_environment()
 

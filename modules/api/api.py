@@ -7,10 +7,9 @@ import uvicorn
 import gradio as gr
 from threading import Lock
 from io import BytesIO
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.exceptions import HTTPException
-from fastapi.encoders import jsonable_encoder
 from secrets import compare_digest
 
 import modules.shared as shared

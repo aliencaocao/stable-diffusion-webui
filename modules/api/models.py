@@ -31,8 +31,8 @@ class ModelDef(BaseModel):
 
     field: str
     field_alias: str
-    field_type: Any = None
-    field_value: Any = None
+    field_type: Any
+    field_value: Any
     field_exclude: bool = False
 
 

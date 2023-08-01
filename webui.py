@@ -20,22 +20,34 @@ from packaging import version
 
 import logging
 
+# We can't use cmd_opts for this because it will not have been initialized at this point.
+log_level = os.environ.get("SD_WEBUI_LOG_LEVEL")
+if log_level:
+    log_level = getattr(logging, log_level.upper(), None) or logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s %(levelname)s [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+
+logging.getLogger("torch.distributed.nn").setLevel(logging.ERROR)  # sshh...
 logging.getLogger("xformers").addFilter(lambda record: 'A matching Triton is not available' not in record.getMessage())
 
-from modules import paths, timer, import_hook, errors, devices  # noqa: F401
-
+from modules import timer
 startup_timer = timer.startup_timer
+startup_timer.record("launcher")
 
 import torch
 import pytorch_lightning   # noqa: F401 # pytorch_lightning should be imported after torch, but it re-enables warnings on import so import once to disable them
 warnings.filterwarnings(action="ignore", category=DeprecationWarning, module="pytorch_lightning")
 warnings.filterwarnings(action="ignore", category=UserWarning, module="torchvision")
-
-
 startup_timer.record("import torch")
 
-import gradio
+import gradio  # noqa: F401
 startup_timer.record("import gradio")
+
+from modules import paths, timer, import_hook, errors, devices  # noqa: F401
+startup_timer.record("setup paths")
 
 import ldm.modules.encoders.modules  # noqa: F401
 startup_timer.record("import ldm")
@@ -352,14 +364,16 @@ def create_api(app):
 
 
 def api_middleware(app: FastAPI):
-    rich_available = True
+    rich_available = False
     try:
-        import anyio # importing just so it can be placed on silent list
-        import starlette # importing just so it can be placed on silent list
-        from rich.console import Console
-        console = Console()
+        if os.environ.get('WEBUI_RICH_EXCEPTIONS', None) is not None:
+            import anyio  # importing just so it can be placed on silent list
+            import starlette  # importing just so it can be placed on silent list
+            from rich.console import Console
+            console = Console()
+            rich_available = True
     except Exception:
-        rich_available = False
+        pass
 
     @app.middleware("http")
     async def log_and_time(req: Request, call_next):
@@ -370,14 +384,14 @@ def api_middleware(app: FastAPI):
         endpoint = req.scope.get('path', 'err')
         if shared.cmd_opts.api_log and endpoint.startswith('/sdapi'):
             print('API {t} {code} {prot}/{ver} {method} {endpoint} {cli} {duration}'.format(
-                t = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
-                code = res.status_code,
-                ver = req.scope.get('http_version', '0.0'),
-                cli = req.scope.get('client', ('0:0.0.0', 0))[0],
-                prot = req.scope.get('scheme', 'err'),
-                method = req.scope.get('method', 'err'),
-                endpoint = endpoint,
-                duration = duration,
+                t=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f"),
+                code=res.status_code,
+                ver=req.scope.get('http_version', '0.0'),
+                cli=req.scope.get('client', ('0:0.0.0', 0))[0],
+                prot=req.scope.get('scheme', 'err'),
+                method=req.scope.get('method', 'err'),
+                endpoint=endpoint,
+                duration=duration,
             ))
         return res
 
@@ -388,7 +402,7 @@ def api_middleware(app: FastAPI):
             "body": vars(e).get('body', ''),
             "errors": str(e),
         }
-        if not isinstance(e, HTTPException): # do not print backtrace on known httpexceptions
+        if not isinstance(e, HTTPException):  # do not print backtrace on known httpexceptions
             message = f"API error: {request.method}: {request.url} {err}"
             if rich_available:
                 print(message)
@@ -429,12 +443,11 @@ def api_only():
     modules.script_callbacks.app_started_callback(None, app)
 
     print(f"Startup time: {startup_timer.summary()}.")
-    api.launch(server_name="0.0.0.0" if cmd_opts.listen else "127.0.0.1", port=cmd_opts.port if cmd_opts.port else 7861)
-
-
-def stop_route(request):
-    shared.state.server_command = "stop"
-    return Response("Stopping.")
+    api.launch(
+        server_name="0.0.0.0" if cmd_opts.listen else "127.0.0.1",
+        port=cmd_opts.port if cmd_opts.port else 7861,
+        root_path=f"/{cmd_opts.subpath}" if cmd_opts.subpath else ""
+    )
 
 
 def webui():
@@ -469,16 +482,15 @@ def webui():
             ssl_verify=cmd_opts.disable_tls_verify,
             debug=cmd_opts.gradio_debug,
             auth=gradio_auth_creds,
-            inbrowser=cmd_opts.autolaunch and os.getenv('SD_WEBUI_RESTARTING ') != '1',
+            inbrowser=cmd_opts.autolaunch and os.getenv('SD_WEBUI_RESTARTING') != '1',
             prevent_thread_lock=True,
             allowed_paths=cmd_opts.gradio_allowed_path,
             app_kwargs={
                 "docs_url": "/docs",
                 "redoc_url": "/redoc",
             },
+            root_path=f"/{cmd_opts.subpath}" if cmd_opts.subpath else "",
         )
-        if cmd_opts.add_stop_route:
-            app.add_route("/_stop", stop_route, methods=["POST"])
 
         # after initial launch, disable --autolaunch for subsequent restarts
         cmd_opts.autolaunch = False
@@ -508,11 +520,6 @@ def webui():
 
         timer.startup_record = startup_timer.dump()
         print(f"Startup time: {startup_timer.summary()}.")
-
-        if cmd_opts.subpath:
-            redirector = FastAPI()
-            redirector.get("/")
-            gradio.mount_gradio_app(redirector, shared.demo, path=f"/{cmd_opts.subpath}")
 
         try:
             while True:
